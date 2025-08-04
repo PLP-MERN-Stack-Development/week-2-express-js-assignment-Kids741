@@ -1,71 +1,122 @@
-// server.js - Starter Express server for Week 2 assignment
+// server.js
 
-// Import required modules
+require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
-const { v4: uuidv4 } = require('uuid');
+const mongoose = require('mongoose');
+const Product = require('./models/productModel');
 
-// Initialize Express app
+// Custom Middleware
+const logger = require('./middleware/logger');
+const auth = require('./middleware/auth');
+const errorHandler = require('./middleware/errorHandler');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware setup
-app.use(bodyParser.json());
+// Connect to MongoDB
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('✅ MongoDB connected'))
+.catch((err) => console.error('❌ MongoDB connection error:', err));
 
-// Sample in-memory products database
-let products = [
-  {
-    id: '1',
-    name: 'Laptop',
-    description: 'High-performance laptop with 16GB RAM',
-    price: 1200,
-    category: 'electronics',
-    inStock: true
-  },
-  {
-    id: '2',
-    name: 'Smartphone',
-    description: 'Latest model with 128GB storage',
-    price: 800,
-    category: 'electronics',
-    inStock: true
-  },
-  {
-    id: '3',
-    name: 'Coffee Maker',
-    description: 'Programmable coffee maker with timer',
-    price: 50,
-    category: 'kitchen',
-    inStock: false
-  }
-];
+// Global Middleware
+app.use(bodyParser.json());
+app.use(logger);
+app.use(auth);
 
 // Root route
 app.get('/', (req, res) => {
-  res.send('Welcome to the Product API! Go to /api/products to see all products.');
+  res.send('👋 Welcome to the Product API! Use /api/products to interact.');
 });
 
-// TODO: Implement the following routes:
-// GET /api/products - Get all products
-// GET /api/products/:id - Get a specific product
-// POST /api/products - Create a new product
-// PUT /api/products/:id - Update a product
-// DELETE /api/products/:id - Delete a product
+// GET all products with filtering, search, and pagination
+app.get('/api/products', async (req, res, next) => {
+  try {
+    const { search, category, inStock, page = 1, limit = 5 } = req.query;
 
-// Example route implementation for GET /api/products
-app.get('/api/products', (req, res) => {
-  res.json(products);
+    const query = {};
+
+    if (search) {
+      query.name = { $regex: search, $options: 'i' };
+    }
+
+    if (category) {
+      query.category = category;
+    }
+
+    if (inStock) {
+      query.inStock = inStock === 'true';
+    }
+
+    const skip = (page - 1) * limit;
+    const total = await Product.countDocuments(query);
+    const products = await Product.find(query).skip(skip).limit(Number(limit));
+
+    res.json({
+      total,
+      page: Number(page),
+      limit: Number(limit),
+      products,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
-// TODO: Implement custom middleware for:
-// - Request logging
-// - Authentication
-// - Error handling
+// GET single product
+app.get('/api/products/:id', async (req, res, next) => {
+  try {
+    const product = await Product.findById(req.params.id);
+    if (!product) return res.status(404).json({ error: 'Product not found' });
+    res.json(product);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// POST create product
+app.post('/api/products', async (req, res, next) => {
+  try {
+    const product = new Product(req.body);
+    await product.save();
+    res.status(201).json(product);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PUT update product
+app.put('/api/products/:id', async (req, res, next) => {
+  try {
+    const updated = await Product.findByIdAndUpdate(req.params.id, req.body, {
+      new: true,
+      runValidators: true,
+    });
+    if (!updated) return res.status(404).json({ error: 'Product not found' });
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// DELETE product
+app.delete('/api/products/:id', async (req, res, next) => {
+  try {
+    const deleted = await Product.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: 'Product not found' });
+    res.status(204).send();
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Error handler
+app.use(errorHandler);
 
 // Start the server
 app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+  console.log(`🚀 Server is running at http://localhost:${PORT}`);
 });
-
-// Export the app for testing purposes
-module.exports = app; 
